@@ -90,11 +90,11 @@ def collect(path):
     return segs, kinds, skipped_meta
 
 
-def rank(segs, query, k):
+def rank(segs, query, k, min_hits=2):
     """会话段落不是记忆卡片：这里必须改。
     照搬卡片那套 BM25 长度归一化，实测会把「public就行」这种短句顶到前三——
     短文档 norm 小、得分虚高，真正的原文（千字段）被压下去。
-    所以改成：IDF 加权交集，除以 sqrt(段长) 做软归一；再要求至少命中 2 个查询词；
+    所以改成：IDF 加权交集，除以 sqrt(段长) 做软归一；再要求至少命中 min_hits 个查询词；
     查询里 4 字以上的连续串整串出现时重奖（同义改写靠这个兜）。
     """
     q = tokens_of(query)
@@ -110,7 +110,7 @@ def rank(segs, query, k):
     scored = []
     for d in docs:
         hits = [tok for tok in q if tok in d["tok"]]
-        if len(hits) < 2:
+        if len(hits) < min_hits:
             continue
         sc = sum(math.log(1 + (n - df[tok] + 0.5) / (df[tok] + 0.5)) for tok in hits)
         sc /= math.sqrt(d["n"] / 40.0)
@@ -179,7 +179,17 @@ def main():
         print("段长：最短 %d / 中位 %d / 最长 %d" % (lens[0], lens[len(lens) // 2], lens[-1]))
     print("查询：", query)
     print()
-    for i, seg in enumerate(rank(segs, query, k), 1):
+    got = rank(segs, query, k, 2)
+    label = ""
+    if not got:
+        got = rank(segs, query, k, 1)
+        label = "降级：严格档（至少两个词）一个都没中，放宽到命中一个词再看——多半是说法和日志里不一样\n"
+    if not got:
+        got = segs[-k:][::-1]
+        label = "兜底：一次都没命中，只给结尾几段。这是「那次会话最后聊了什么」，不是相关结果，别当证据用\n"
+    if label:
+        print(label)
+    for i, seg in enumerate(got, 1):
         body = seg["x"]
         if len(body) > 500:
             body = body[:500] + "…"
