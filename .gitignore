@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+
+# 这个仓库是 public 的，下面这些一律不许进来
+*.jsonl
+*本子.md
+private/
+*消息.md
+状态.jsonl
+*额外规则.md
+.auth
+*.key
+*.pem
