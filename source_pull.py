@@ -7,6 +7,25 @@ import sys
 import unicodedata
 
 SECRETS = re.compile(r"(github_pat_[A-Za-z0-9_]+|ghp_[A-Za-z0-9]+|gho_[A-Za-z0-9]+|token[\"'\s:=]+[A-Za-z0-9_\-]{16,})", re.I)
+# 键值形态：0.4.11 实测教训——本机 .qoder/mcp-router.json 里那种 apiKey 不在上面那条的覆盖范围内。
+# 只认 github 形是不够的：日志里出现过的是「某个键后面跟一长串」这种形状的凭据，就得一律挡住。
+SECRET_KEYS = ("apiKey", "api_key", "access_token", "refresh_token", "authorization",
+               "bearer", "client_secret", "secret", "password", "passwd", "session_key", "private_key")
+SECRET_KV = re.compile(r"[\"']?(?:%s)[\"']?\s*[:=]\s*[\"']?([A-Za-z0-9_\-\.+/=]{12,})" % "|".join(SECRET_KEYS), re.I)
+MASKED = re.compile(r"\[已脱敏\]")
+
+
+def count_secrets(text):
+    n = 0
+    for rx in (SECRETS, SECRET_KV):
+        n += len(rx.findall(text))
+    return n
+
+
+def mask(text):
+    for rx in (SECRETS, SECRET_KV):
+        text = rx.sub("[已脱敏]", text)
+    return text
 REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
 OTHER_INJECT = re.compile(r"<(?:function_results|output|task-notification)>.*?</(?:function_results|output|task-notification)>", re.S)
 
@@ -18,7 +37,7 @@ def sanitize(text):
         return ""
     t = REMINDER.sub(" ", t)
     t = OTHER_INJECT.sub(" ", t)
-    t = SECRETS.sub("[已脱敏]", t)
+    t = mask(t)
     return re.sub(r"[ \t]+", " ", t).strip()
 
 
@@ -138,15 +157,15 @@ def mask_check(path):
             b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
         for b in blocks:
             blob = json.dumps(b, ensure_ascii=False)
-            c = len(SECRETS.findall(blob))
+            c = count_secrets(blob)
             if c:
                 key = "%s/%s" % (row.get("type"), b.get("type"))
                 by_block[key] = by_block.get(key, 0) + c
     segs, _, _ = collect(path)
-    after = sum(len(SECRETS.findall(s["x"])) for s in segs)
-    leaked = sum(1 for s in segs if "[已脱敏]" in s["x"])
-    print("文件原始凭据命中：%d 处，分布（行类型/块类型）：%s"
-          % (len(SECRETS.findall(raw)), by_block or "无"))
+    after = sum(count_secrets(s["x"]) for s in segs)
+    leaked = sum(1 for s in segs if MASKED.search(s["x"]))
+    print("文件原始凭据命中（含 apiKey 这类键值形）：%d 处，分布（行类型/块类型）：%s"
+          % (count_secrets(raw), by_block or "无"))
     print("提取出的原文段落里仍含凭据：%d 处" % after)
     print("被替换过的段落数：%d（这些段只以 [已脱敏] 出现，不打印原值）" % leaked)
     print("结论：", "拦住了" if after == 0 else "没拦住，不能上")
